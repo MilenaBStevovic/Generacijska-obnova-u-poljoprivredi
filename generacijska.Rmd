@@ -1,0 +1,191 @@
+---
+title: "Analiza generacijske obnove u Srbiji"
+author: "Milena B. Stevović"
+date: '2022-06-24'
+output: rmdformats::readthedown 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+<p> U nastavku su prikazani rezultati ukrštanja odabranih varijabli iz Ankete o strukturi poljoprivrednih gazdinstava iz 2018. godine (FSS 2018) sa odgovarajućim socio-ekonomskim varijablama na nivou opština. Cilj je da se kvantifikovuje i opiše dinamika generacijske obnove u poljoprivredi Srbije.<br>
+S ozbzirom da je reč o podacima koji su dostupni u mašinski čitljivom formatu, sužen je obuhvat dostupnih varijabli na one koje su otpremljene u OpenData portalu RS.</p>
+
+
+<p><font size=3.5 color="tomato"> *FSS 2018 varijable*</font><br>
+         - nosioci po starosnim grupama<br>
+         - intervali KPZ u ha.</p>
+      
+<p><font size=3.5 color="tomato"> *Varijable na opštinskom nivou*</font><br>
+         - stepen razvijenosti JLSU prema Uredbi o utvrđivanju jedinstvene liste            razvijenosti regiona i jedinica LSU iz 2014. godine.</p>
+
+
+# Nosioci poljoprivrednih gazdinstava prema starosnim kohortima u Republici Srbiji
+*Izvor podataka*: Portal otvorenih podataka RZS. Podaci preuzeti u mašinski čitljivom formatu, sa linka <https://opendata.stat.gov.rs/odata/?id=sr-lat>.
+
+## *Priprema podataka za analizu (sređivanje podataka) - Data Preparation*
+
+<font color="darkcyan">Dodavanje biblioteka za rad
+
+```{r message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(forcats)
+library(tidyr)
+library(ggplot2)
+```
+
+<font color="darkcyan">Učitavanje podataka/csv fajla</font>
+```{r data_input, echo=FALSE, results='asis'}
+yfp <- read.csv2("F:/09-Moje_PhD_studije/13-ARP/4-analitika za rad_R okruzenje/data_yfp.csv", header = TRUE, sep =";")
+```
+
+```{r}
+kbl(yfp[1:5, ], caption = "Tabela sa ulaznim podacima") %>% 
+  kable_paper("hover", full_width = F) # Pregled tabele - prvih pet redova
+```
+
+
+<font color="darkcyan">Pregled tipa podataka i pretvaranje character varijabli "IDIntervalKPZ" i "razvoj" u uređene faktor varijable
+
+```{r}
+sapply(yfp, class) # Pregled tipa podataka
+```
+
+```{r}
+names <- c('nIntervalKPZ' ,'razvoj')
+yfp[,names] <- lapply(yfp[,names] , factor)
+str(yfp)
+```
+
+<font color="darkcyan">Određivanje redosleda nivoa faktora
+
+```{r}
+yfp <- yfp %>%
+  mutate(nIntervalKPZ = fct_relevel(nIntervalKPZ, "ha>=50", "10<=ha<50", "5<=ha<10", "2<=ha<5", "1<=ha<2", "< 1 ha"))
+```
+
+<font color="darkcyan">Kreiranje novog objekta sa filtriranim podacima prema kriterijumu starosti</font>
+
+  <p><font size=2 color="black">Izdvojeni podaci za nosioce starosti do 35        godina i 65 i više godina. Nije moguće izdvojiti nosioce starosti do 40         godina s obzirom da su na Open Data portalu objavljeni podaci za intervale       do 25,25-35,35-45,45-55,55-65, preko 65 godina.</p>
+
+```{r}
+kohort <- c("Ukupno", "do35", "god>=65")
+yfp_kohort <- yfp %>% 
+  filter(nStarInt %in% kohort) %>% 
+  select(starts_with("n"), c("brojG", "razvoj"))
+```
+
+<font color="darkcyan">Grupisanje podataka po kolonama na osnovu kriterijuma u redu
+
+```{r}
+yfp_kohort1 <- yfp_kohort %>% 
+  group_by(nTer, nREG, nIntervalKPZ, nStarInt, razvoj) %>% 
+    summarise_all(~ if(is.numeric(.)) sum(., na.rm = TRUE)) # grupisanje na osnovu odabranih varijabli
+```
+
+<font color="darkcyan">Transformisanje iz long formata u wide format tabele
+
+```{r}
+yfp_kohort1 <- yfp_kohort1 %>% 
+  spread(key = nStarInt, value = brojG)
+```
+
+## *Elemenetarna deskriptivna statistička analiza - Data Analysis*
+
+<font color="darkcyan">Kreiranje novih varijabli - udeli odabranih starosnih grupa u ukupnom broju nosilaca
+```{r}
+yfp_kohort2 <- yfp_kohort1 %>% 
+  mutate(nosioci35.udeo=do35/Ukupno*100,
+         nosioci65.udeo=`god>=65`/Ukupno*100) %>%  #sa dodavanjem novih kolona
+  replace(is.na(.), 0) %>% 
+  ungroup %>%
+  as.data.frame()
+```
+
+<font color="darkcyan">Naknadno izracunavanje proseka po regionima (opciono za vizuelizaciju - ne mora)
+```{r}
+yfp_kohort2 <- yfp_kohort2 %>% 
+  group_by(nREG) %>%
+  mutate(avg.35=mean(nosioci35.udeo),
+        avg.65=mean(nosioci65.udeo)) %>% 
+  ungroup %>%
+  as.data.frame()
+```
+
+<font color="darkcyan">Prikazivanje numerickih vrednosti u odabranim kolonama sa dva decimalna mesta
+```{r}
+yfp_df <- yfp_kohort2 %>% 
+  mutate_at(8:11, 
+            round,
+            digits = 2)%>% 
+  ungroup %>%
+  as.data.frame()
+```
+
+## *Vizuelizacija podataka o nosiocima poljoprivrednih gazdinstava - Data Visualisation*
+
+<p><font color="darkcyan">Crtanje grafikona uz pomoc biblioteke "ggplot".<br>
+<font color="darkcyan">*Jednodimenzionalni aspekt*</p>
+```{r}
+ggplot(data = yfp_df, 
+       aes(x = nosioci35.udeo, y = nosioci65.udeo, color = nIntervalKPZ)) +
+       geom_point() +
+       scale_color_brewer(type = "qual", palette = "Set2")
+```
+
+<font color="darkcyan">*Dvodimenzionalni aspekt*
+```{r}
+gg <- ggplot(data = yfp_df, aes(x = nosioci35.udeo, y = nosioci65.udeo, color = nIntervalKPZ)) +
+  geom_point(size = 1.2, alpha = 0.60) +
+  facet_grid(razvoj~nREG) +
+  scale_y_continuous(limits = c(0, 80)) +
+  scale_x_continuous(limits = c(0, 60), expand = c(0.005, 0.000)) + 
+  scale_color_brewer(type = "qual", palette = 2)
+```
+
+```{r}
+set.seed(123)
+```
+
+  <p><font size=2 color="black">Dodavanje elemenata na grafikon - podaci prema intervalima KPZ i stepenu razvijenosti i proseci za RS.</p>
+```{r}
+ggYfp <- gg + 
+  geom_jitter(size = 2, alpha = 0.25, width = 0.1) +
+  geom_point(aes(avg.35, avg.65), 
+             size = 4.5,
+             color = "#3a4f46") +
+  guides(color = guide_legend(override.aes = list(size = 2))) +
+  theme(legend.text = element_text(size = 8)) +
+  annotate("text", x = 40, y = 70, # gornji desni ugao polja
+           size = 2.3,
+           label = "Prosek.RS, %: 3,1 (nosioci <35) \n 42,8 (nosioci 65+)",
+           colour = "gray10")
+```
+
+```{r}
+print(ggYfp) # prikaz objekta
+```
+
+<font color="darkcyan">Izvoz grafikona
+```{r}
+ggsave("yfp_graf.tiff", ggYfp, width=30, height=20, units="cm", dpi=280) # snimanje grafikona kao slike
+```
+
+
+
+
+<center><font size=2 color="black"> © 2022 Milena B. Stevović.  All rights reserved. </center>
+
+
+
+
+
+
+
